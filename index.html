@@ -643,8 +643,7 @@
 
             text += `--- NETWORK INFO ---\n`;
             text += `ISP: ${networkInfo.isp}\n`;
-            text += `Location: ${networkInfo.city}, ${networkInfo.country}\n`;
-            text += `IP: ${networkInfo.ip}\n\n`;
+            text += `Location: ${networkInfo.city}, ${networkInfo.country}\n\n`;
             
             text += `--- LATENCY & JITTER ---\n`;
             const sortedKeys = Object.keys(results).sort((a,b) => results[a].avg - results[b].avg);
