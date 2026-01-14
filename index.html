@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Prism Global Diagnostics</title>
+    <title>Global Diagnostics</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <style>
@@ -140,7 +140,7 @@
         #three-overlay {
             position: fixed;
             top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0,0,0,0.9);
+            background: rgba(0,0,0,1); /* Fully opaque black initially */
             display: none;
             z-index: 999;
         }
@@ -156,6 +156,7 @@
             padding: 20px;
             border-radius: 10px;
             border: 1px solid #444;
+            backdrop-filter: blur(5px);
         }
         .ui-title { font-size: 1.5rem; font-weight: bold; margin-bottom: 5px; color: var(--accent); }
         .ui-sub { font-size: 1rem; color: #aaa; }
@@ -166,7 +167,7 @@
 <body>
 
     <h1>System & Network Diagnostics</h1>
-    <p>10s GPU Stress Test + Parallel Network Latency Analysis.</p>
+    <p>10s GPU Stress Test (Custom Shader) + Network Latency Analysis.</p>
 
     <div class="controls">
         <button onclick="runAllTests()" id="btn-run">Start Full Diagnostics</button>
@@ -200,44 +201,120 @@
     <div id="three-overlay">
         <div id="three-ui">
             <div class="ui-title">STRESS TESTING GPU</div>
-            <div class="ui-sub">Simulating heavy load (500 objects) + Network Pings</div>
+            <div class="ui-sub">Simulating heavy load (500 objects) + Custom Shaders</div>
             <div class="ui-timer" id="fps-timer">10.0s</div>
             <div class="ui-live" id="fps-live">Wait...</div>
         </div>
     </div>
 
     <script>
-        // FULL LIST RESTORED
+        // --- CUSTOM SHADERS (Provided by User) ---
+        const myVertexShader = `
+            varying vec2 vUv;
+            varying vec3 vWorldPosition;
+            void main() {
+                vUv = uv;
+                vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                vWorldPosition = worldPosition.xyz;
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `;
+
+        const myFragmentShader = `
+            uniform float time;
+            uniform int graphicsQuality;
+            varying vec2 vUv;
+            varying vec3 vWorldPosition;
+      
+            vec3 getPalette(int i) {
+                if (i == 0) return vec3(0.23, 0.0, 0.51);  // Indigo
+                if (i == 1) return vec3(0.48, 0.17, 0.75); // Vivid Purple
+                if (i == 2) return vec3(1.0, 0.0, 0.43);   // Hot Pink
+                if (i == 3) return vec3(0.23, 0.53, 1.0);  // Azure
+                if (i == 4) return vec3(0.0, 0.96, 0.83);  // Fluo Cyan
+                return vec3(0.62, 0.31, 0.87);             // Light Purple
+            }
+      
+            float hash(vec2 p) { 
+                return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); 
+            }
+      
+            void main() {
+                vec3 dir = normalize(vWorldPosition);
+                vec2 uv = dir.xy * 0.9; 
+      
+                // 1. BACKGROUND
+                vec3 finalColor = vec3(0.008, 0.0, 0.031); 
+      
+                // 2. PLASMA ORBS
+                if (graphicsQuality >= 1) { 
+                    float t = time * 0.25; 
+                    for (int i = 0; i < 6; i++) {
+                        float fi = float(i);
+                        float seed = fi * 137.5; 
+                        float x = sin(t + seed) * 0.4 + cos(t * 0.43 + seed) * 0.2;
+                        float y = cos(t * 0.73 + seed) * 0.4 + sin(t * 0.23 + seed) * 0.2;
+                        vec2 blobPos = vec2(x, y);
+                        float dist = length(uv - blobPos);
+                        float radius = 0.5 + sin(t * 1.5 + seed * 2.0) * 0.15;
+                        float glow = smoothstep(radius, 0.0, dist);
+                        vec3 color = getPalette(i);
+                        finalColor += color * glow * 0.5; 
+                    }
+                }
+      
+                // 3. STARS
+                if (graphicsQuality >= 2) { 
+                    float gridScale = 12.0;
+                    float seedThreshold = 0.8;
+                    if (graphicsQuality > 2) { 
+                        gridScale = 20.0; 
+                        seedThreshold = 0.4; 
+                    }
+      
+                    vec2 gridUV = dir.xy * gridScale;
+                    vec2 gridID = floor(gridUV);
+                    vec2 gridPos = fract(gridUV);
+                    float seed = hash(gridID);
+      
+                    if (seed > seedThreshold) {
+                        vec2 randomPos = vec2(fract(seed * 43.12), fract(seed * 91.34));
+                        vec2 starOffset = 0.5 + (randomPos - 0.5) * 0.6;
+                        float dist = length(gridPos - starOffset);
+                        float twinkleSpeed = 2.0 + fract(seed * 10.0) * 3.0;
+                        float twinkle = 0.5 + 0.5 * sin(time * twinkleSpeed + seed * 5.0);
+                        float coreRadius = 0.02 + (fract(seed * 12.0) * 0.01);
+                        float core = smoothstep(coreRadius * twinkle, 0.0, dist);
+                        float glowRadius = 0.05 * twinkle;
+                        float starGlow = smoothstep(glowRadius, 0.0, dist) * 0.5;
+                        vec3 starColor = vec3(0.8, 1.0, 1.0);
+                        finalColor += starColor * (core + starGlow);
+                    }
+                }
+      
+                gl_FragColor = vec4(finalColor, 1.0);
+            }
+        `;
+
+        // FULL LIST OF ENDPOINTS
         const endpoints = [
-            // EUROPE
             { name: "Europe (Paris)", code: "eu-west-3", url: "https://dynamodb.eu-west-3.amazonaws.com/ping" },
-            { name: "Europe (Ireland)", code: "eu-west-1", url: "https://dynamodb.eu-west-1.amazonaws.com/ping" },
             { name: "Europe (London)", code: "eu-west-2", url: "https://dynamodb.eu-west-2.amazonaws.com/ping" },
             { name: "Europe (Frankfurt)", code: "eu-central-1", url: "https://dynamodb.eu-central-1.amazonaws.com/ping" },
             { name: "Europe (Stockholm)", code: "eu-north-1", url: "https://dynamodb.eu-north-1.amazonaws.com/ping" },
             { name: "Europe (Milan)", code: "eu-south-1", url: "https://dynamodb.eu-south-1.amazonaws.com/ping" },
             { name: "Europe (Spain)", code: "eu-south-2", url: "https://dynamodb.eu-south-2.amazonaws.com/ping" },
-            
-            // NORTH AMERICA
             { name: "US East (N. Virginia)", code: "us-east-1", url: "https://dynamodb.us-east-1.amazonaws.com/ping" },
             { name: "US East (Ohio)", code: "us-east-2", url: "https://dynamodb.us-east-2.amazonaws.com/ping" },
             { name: "US West (N. California)", code: "us-west-1", url: "https://dynamodb.us-west-1.amazonaws.com/ping" },
             { name: "US West (Oregon)", code: "us-west-2", url: "https://dynamodb.us-west-2.amazonaws.com/ping" },
             { name: "Canada (Central)", code: "ca-central-1", url: "https://dynamodb.ca-central-1.amazonaws.com/ping" },
-            
-            // SOUTH AMERICA
             { name: "South America (São Paulo)", code: "sa-east-1", url: "https://dynamodb.sa-east-1.amazonaws.com/ping" },
-            
-            // ASIA PACIFIC
             { name: "Asia Pacific (Tokyo)", code: "ap-northeast-1", url: "https://dynamodb.ap-northeast-1.amazonaws.com/ping" },
             { name: "Asia Pacific (Seoul)", code: "ap-northeast-2", url: "https://dynamodb.ap-northeast-2.amazonaws.com/ping" },
             { name: "Asia Pacific (Singapore)", code: "ap-southeast-1", url: "https://dynamodb.ap-southeast-1.amazonaws.com/ping" },
             { name: "Asia Pacific (Sydney)", code: "ap-southeast-2", url: "https://dynamodb.ap-southeast-2.amazonaws.com/ping" },
-            { name: "Asia Pacific (Mumbai)", code: "ap-south-1", url: "https://dynamodb.ap-south-1.amazonaws.com/ping" },
-            { name: "Asia Pacific (Hyderabad)", code: "ap-south-2", url: "https://dynamodb.ap-south-2.amazonaws.com/ping" },
             { name: "Asia Pacific (Hong Kong)", code: "ap-east-1", url: "https://dynamodb.ap-east-1.amazonaws.com/ping" },
-            
-            // MIDDLE EAST & AFRICA
             { name: "Middle East (UAE)", code: "me-central-1", url: "https://streams.dynamodb.me-central-1.amazonaws.com/ping" },
             { name: "Africa (Cape Town)", code: "af-south-1", url: "https://dynamodb.af-south-1.amazonaws.com/ping" }
         ];
@@ -288,7 +365,7 @@
             } catch (e) { networkInfo.city = "Adblock/Error"; }
         }
 
-        // --- THREE.JS BENCHMARK LOGIC (10s Duration) ---
+        // --- THREE.JS BENCHMARK LOGIC (10s) ---
         function runThreeJSTest() {
             return new Promise(resolve => {
                 const overlay = document.getElementById('three-overlay');
@@ -297,8 +374,8 @@
                 overlay.style.display = 'block';
 
                 const scene = new THREE.Scene();
-                scene.background = new THREE.Color(0x111111);
-                scene.fog = new THREE.Fog(0x111111, 20, 100);
+                // We don't need scene.background color anymore as we use the shader sphere
+                // scene.background = new THREE.Color(0x111111);
 
                 const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
                 camera.position.set(0, 40, 40);
@@ -308,15 +385,32 @@
                 renderer.setSize(window.innerWidth, window.innerHeight);
                 overlay.appendChild(renderer.domElement);
 
+                // --- ADDING THE SHADER BACKGROUND ---
+                const skyGeo = new THREE.SphereGeometry(200, 64, 64);
+                const skyMat = new THREE.ShaderMaterial({
+                    vertexShader: myVertexShader,
+                    fragmentShader: myFragmentShader,
+                    uniforms: {
+                        time: { value: 0 },
+                        graphicsQuality: { value: 2 } // 2 = Medium+ (Stars + Plasma)
+                    },
+                    side: THREE.BackSide // Render on the inside of the sphere
+                });
+                const skySphere = new THREE.Mesh(skyGeo, skyMat);
+                scene.add(skySphere);
+
+                // Lights
                 const ambientLight = new THREE.AmbientLight(0x404040); 
                 scene.add(ambientLight);
                 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
                 dirLight.position.set(10, 50, 20);
                 scene.add(dirLight);
 
+                // Grid
                 const gridHelper = new THREE.GridHelper(100, 50, 0x0070f3, 0x333333);
                 scene.add(gridHelper);
 
+                // Stress Objects
                 const geometry = new THREE.BoxGeometry(2, 2, 2);
                 const material = new THREE.MeshPhongMaterial({ color: 0x444444, flatShading: true });
                 
@@ -330,6 +424,7 @@
                     scene.add(mesh);
                 }
 
+                // Player
                 const playerGeo = new THREE.SphereGeometry(1.5, 32, 32);
                 const playerMat = new THREE.MeshBasicMaterial({ color: 0x0070f3 });
                 const player = new THREE.Mesh(playerGeo, playerMat);
@@ -353,8 +448,13 @@
 
                 function animate() {
                     const now = performance.now();
+                    const totalElapsed = (now - startTime) / 1000;
                     frames++;
 
+                    // Update Shader Time
+                    skyMat.uniforms.time.value = totalElapsed;
+
+                    // Calculate FPS every 500ms
                     if (now - lastTime >= 500) {
                         const fps = Math.round((frames * 1000) / (now - lastTime));
                         fpsValues.push(fps);
@@ -363,11 +463,11 @@
                         lastTime = now;
                     }
 
-                    const elapsed = now - startTime;
-                    const remaining = Math.max(0, (totalDuration - elapsed) / 1000).toFixed(1);
+                    const elapsedMs = now - startTime;
+                    const remaining = Math.max(0, (totalDuration - elapsedMs) / 1000).toFixed(1);
                     timerEl.innerText = remaining + "s";
 
-                    if (elapsed >= totalDuration) {
+                    if (elapsedMs >= totalDuration) {
                         cancelAnimationFrame(animationId);
                         
                         if (fpsValues.length > 0) {
@@ -384,6 +484,7 @@
                         return;
                     }
 
+                    // Move Player
                     const target = path[currentTargetIndex];
                     const direction = new THREE.Vector3().subVectors(target, player.position);
                     const dist = direction.length();
@@ -440,11 +541,9 @@
         }
 
         async function runNetworkTests() {
-            // STEP 1: SAFETY WAIT (Avoid fetching heavy JS interference)
             updateProgress(0, endpoints.length, "Stabilizing Network (3s)...");
             await new Promise(r => setTimeout(r, 3000));
 
-            // STEP 2: START PINGING
             for (let i = 0; i < endpoints.length; i++) {
                 const ep = endpoints[i];
                 const cellSamples = document.getElementById(`samples-${ep.code}`);
@@ -453,7 +552,6 @@
                 
                 updateProgress(i + 1, endpoints.length, `Testing ${ep.name}...`);
                 
-                // Warmup
                 await measurePing(ep.url);
                 await new Promise(r => setTimeout(r, 100));
 
@@ -515,7 +613,6 @@
                 document.getElementById(`avg-${ep.code}`).className = 'ping-cell highlight';
             });
 
-            // PARALLEL EXECUTION
             await Promise.all([
                 runThreeJSTest(), 
                 runNetworkTests() 
@@ -533,7 +630,7 @@
             if (Object.keys(results).length === 0) return;
             const now = new Date().toISOString();
             
-            let text = `=== PRISM DIAGNOSTIC REPORT ===\n`;
+            let text = `=== DIAGNOSTIC REPORT ===\n`;
             text += `Date: ${now}\n\n`;
 
             text += `--- HARDWARE & BENCHMARK (10s Stress Test) ---\n`;
